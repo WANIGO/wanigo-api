@@ -3,6 +3,7 @@
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\API\AuthController;
 use App\Http\Controllers\API\Nasabah\ProfilNasabahController;
+use App\Http\Controllers\API\Nasabah\EdukasiController;
 
 /*
 |--------------------------------------------------------------------------
@@ -16,7 +17,6 @@ Route::post('/register', [AuthController::class, 'register']);
 Route::post('/login', [AuthController::class, 'login']);
 Route::post('/forgot-password', [AuthController::class, 'forgotPassword']);
 Route::post('/reset-password', [AuthController::class, 'resetPassword']);
-Route::post('/update-profile', [AuthController::class, 'updateProfile']);
 
 // Rute yang memerlukan otentikasi
 Route::middleware('auth:sanctum')->group(function () {
@@ -24,15 +24,30 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/logout', [AuthController::class, 'logout']);
     Route::get('/profile', [AuthController::class, 'getProfile']);
     Route::post('/update-profile', [AuthController::class, 'updateProfile']);
-
     Route::get('/profile-status', [AuthController::class, 'checkProfileStatus']);
 
     // Rute khusus nasabah
     Route::prefix('nasabah')->middleware('role:nasabah')->group(function () {
+        // Profil Nasabah
         Route::get('/profile', [ProfilNasabahController::class, 'getProfile']);
         Route::post('/profile/step1', [ProfilNasabahController::class, 'updateProfileStep1']);
         Route::post('/profile/step2', [ProfilNasabahController::class, 'updateProfileStep2']);
         Route::post('/profile/step3', [ProfilNasabahController::class, 'updateProfileStep3']);
+
+        // Fitur Edukasi
+        Route::prefix('edukasi')->group(function () {
+            // Modul
+            Route::get('/moduls', [EdukasiController::class, 'getModuls']);
+            Route::get('/moduls/{id}', [EdukasiController::class, 'getModulDetail']);
+
+            // Konten Video
+            Route::get('/videos/{id}', [EdukasiController::class, 'getVideoDetail']);
+            Route::post('/videos/{id}/progress', [EdukasiController::class, 'updateVideoProgress']);
+
+            // Konten Artikel
+            Route::get('/artikels/{id}', [EdukasiController::class, 'getArtikelDetail']);
+            Route::post('/artikels/{id}/progress', [EdukasiController::class, 'updateArtikelProgress']);
+        });
     });
 
     // Rute khusus bank sampah
