@@ -16,12 +16,15 @@ Route::post('/register', [AuthController::class, 'register']);
 Route::post('/login', [AuthController::class, 'login']);
 Route::post('/forgot-password', [AuthController::class, 'forgotPassword']);
 Route::post('/reset-password', [AuthController::class, 'resetPassword']);
+Route::post('/update-profile', [AuthController::class, 'updateProfile']);
 
 // Rute yang memerlukan otentikasi
 Route::middleware('auth:sanctum')->group(function () {
     // Rute untuk semua pengguna
     Route::post('/logout', [AuthController::class, 'logout']);
     Route::get('/profile', [AuthController::class, 'getProfile']);
+    Route::post('/update-profile', [AuthController::class, 'updateProfile']);
+
     Route::get('/profile-status', [AuthController::class, 'checkProfileStatus']);
 
     // Rute khusus nasabah

@@ -215,6 +215,102 @@ class AuthController extends Controller
     }
 
     /**
+     * Update profil dasar pengguna.
+     *
+     * @param  \Illuminate\Http\Request  $request
+     * @return \Illuminate\Http\Response
+     */
+    public function updateProfile(Request $request)
+    {
+        $user = $request->user();
+
+        $validator = Validator::make($request->all(), [
+            'name' => 'required|string|max:255',
+            'phone_number' => 'required|string|max:15',
+            // Email divalidasi jika ada dalam request
+            'email' => $request->has('email') ? 'string|email|max:255|unique:users,email,'.$user->id : '',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Validasi gagal',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        $dataToUpdate = [
+            'name' => $request->name,
+            'phone_number' => $request->phone_number,
+        ];
+
+        // Tambahkan email ke data yang akan diupdate jika ada dalam request
+        if ($request->has('email')) {
+            $dataToUpdate['email'] = $request->email;
+        }
+
+        $user->update($dataToUpdate);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Profil berhasil diperbarui',
+            'data' => [
+                'user' => $user,
+                'profile_status' => $user->getProfileStatus(),
+            ]
+        ]);
+    }
+
+    /**
+     * Update password pengguna.
+     *
+     * @param  \Illuminate\Http\Request  $request
+     * @return \Illuminate\Http\Response
+     */
+    public function updatePassword(Request $request)
+    {
+        $user = $request->user();
+
+        $validator = Validator::make($request->all(), [
+            'current_password' => 'required|string',
+            'password' => [
+                'required',
+                'string',
+                PasswordRule::min(8)
+                    ->mixedCase()
+                    ->numbers()
+                    ->symbols(),
+                'confirmed'
+            ],
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Validasi gagal',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        // Verifikasi password lama
+        if (!Hash::check($request->current_password, $user->password)) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Password saat ini tidak sesuai',
+            ], 401);
+        }
+
+        $user->update([
+            'password' => Hash::make($request->password)
+        ]);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Password berhasil diperbarui',
+        ]);
+    }
+
+    /**
      * Mengirim link reset password ke email.
      *
      * @param  \Illuminate\Http\Request  $request
