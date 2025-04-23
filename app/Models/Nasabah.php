@@ -62,7 +62,8 @@ class Nasabah extends Model
      */
     public function isPartTwoComplete()
     {
-        return !is_null($this->tahu_memilah_sampah) &&
+        return $this->isPartOneComplete() &&
+               !is_null($this->tahu_memilah_sampah) &&
                !is_null($this->motivasi_memilah_sampah) &&
                !is_null($this->nasabah_bank_sampah);
     }
@@ -72,7 +73,52 @@ class Nasabah extends Model
      */
     public function isPartThreeComplete()
     {
-        return !is_null($this->frekuensi_memilah_sampah) &&
+        return $this->isPartTwoComplete() &&
+               !is_null($this->frekuensi_memilah_sampah) &&
                !is_null($this->jenis_sampah_dikelola);
+    }
+
+    /**
+     * Get profile completion percentage.
+     *
+     * @return int
+     */
+    public function getProfileCompletionPercentage()
+    {
+        $totalFields = 8; // Total fields required for complete profile
+        $completedFields = 0;
+
+        if (!is_null($this->jenis_kelamin)) $completedFields++;
+        if (!is_null($this->usia)) $completedFields++;
+        if (!is_null($this->profesi)) $completedFields++;
+        if (!is_null($this->tahu_memilah_sampah)) $completedFields++;
+        if (!is_null($this->motivasi_memilah_sampah)) $completedFields++;
+        if (!is_null($this->nasabah_bank_sampah)) $completedFields++;
+        if (!is_null($this->frekuensi_memilah_sampah)) $completedFields++;
+        if (!is_null($this->jenis_sampah_dikelola)) $completedFields++;
+
+        return (int) (($completedFields / $totalFields) * 100);
+    }
+
+    /**
+     * Get next step for profile completion.
+     *
+     * @return string
+     */
+    public function getNextStep()
+    {
+        if (!$this->isPartOneComplete()) {
+            return 'step1';
+        }
+
+        if (!$this->isPartTwoComplete()) {
+            return 'step2';
+        }
+
+        if (!$this->isPartThreeComplete()) {
+            return 'step3';
+        }
+
+        return 'complete';
     }
 }

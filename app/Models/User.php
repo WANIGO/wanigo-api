@@ -31,6 +31,7 @@ class User extends Authenticatable
         'password',
         'role',
         'phone_number',
+        'email_verified_at', // Ditambahkan untuk verifikasi email
     ];
 
     /**
@@ -81,6 +82,36 @@ class User extends Authenticatable
     public function hasCompleteNasabahProfile()
     {
         return $this->nasabah && $this->nasabah->isProfileComplete();
+    }
+
+    /**
+     * Get the current profile completion status.
+     * 
+     * @return string
+     */
+    public function getProfileStatus()
+    {
+        if (!$this->nasabah) {
+            return 'not_started';
+        }
+        
+        if ($this->nasabah->isProfileComplete()) {
+            return 'complete';
+        }
+        
+        if ($this->nasabah->isPartThreeComplete()) {
+            return 'step3_complete';
+        }
+        
+        if ($this->nasabah->isPartTwoComplete()) {
+            return 'step2_complete';
+        }
+        
+        if ($this->nasabah->isPartOneComplete()) {
+            return 'step1_complete';
+        }
+        
+        return 'started';
     }
 
     /**
