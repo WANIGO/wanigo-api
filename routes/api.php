@@ -1,16 +1,13 @@
 <?php
-
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\API\AuthController;
 use App\Http\Controllers\API\Nasabah\ProfilNasabahController;
 use App\Http\Controllers\API\Nasabah\EdukasiController;
-
 /*
 |--------------------------------------------------------------------------
 | API Routes
 |--------------------------------------------------------------------------
 */
-
 // Rute Autentikasi (publik)
 Route::post('/check-email', [AuthController::class, 'checkEmail']);
 Route::post('/register', [AuthController::class, 'register']);
@@ -27,7 +24,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/profile-status', [AuthController::class, 'checkProfileStatus']);
 
     // Rute khusus nasabah
-    Route::prefix('nasabah')->middleware('role:nasabah')->group(function () {
+    Route::prefix('nasabah')->group(function () {
         // Profil Nasabah
         Route::get('/profile', [ProfilNasabahController::class, 'getProfile']);
         Route::post('/profile/step1', [ProfilNasabahController::class, 'updateProfileStep1']);
@@ -51,22 +48,22 @@ Route::middleware('auth:sanctum')->group(function () {
     });
 
     // Rute khusus bank sampah
-    Route::prefix('bank-sampah')->middleware('role:mitra')->group(function () {
+    Route::prefix('bank-sampah')->group(function () {
         // Route untuk bank sampah akan ditambahkan nanti
     });
 
     // Rute khusus industri
-    Route::prefix('industri')->middleware('role:industri')->group(function () {
+    Route::prefix('industri')->group(function () {
         // Route untuk industri akan ditambahkan nanti
     });
 
     // Rute khusus pemerintah
-    Route::prefix('pemerintah')->middleware('role:pemerintah')->group(function () {
+    Route::prefix('pemerintah')->group(function () {
         // Route untuk pemerintah akan ditambahkan nanti
     });
 
     // Rute khusus admin
-    Route::prefix('admin')->middleware('role:admin')->group(function () {
+    Route::prefix('admin')->group(function () {
         // Route untuk admin akan ditambahkan nanti
     });
 });

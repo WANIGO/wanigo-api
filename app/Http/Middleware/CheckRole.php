@@ -17,7 +17,7 @@ class CheckRole
      */
     public function handle(Request $request, Closure $next, string $role): Response
     {
-        if ($request->user()->role !== $role) {
+        if (!$request->user() || $request->user()->role !== $role) {
             return response()->json([
                 'status' => 'error',
                 'message' => 'Unauthorized. You do not have the required role.',
