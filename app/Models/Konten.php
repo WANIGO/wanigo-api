@@ -37,6 +37,14 @@ class Konten extends Model
     /**
      * Mendapatkan modul terkait dengan konten ini.
      */
+
+    /**
+     * Mendapatkan semua transaksi poin terkait dengan konten ini.
+     */
+    public function pointTransactions()
+    {
+        return $this->morphMany(PointTransaction::class, 'reference');
+    }
     public function modul(): BelongsTo
     {
         return $this->belongsTo(Modul::class, 'modul_id');
