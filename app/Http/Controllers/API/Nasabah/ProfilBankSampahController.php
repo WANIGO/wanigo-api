@@ -5,6 +5,8 @@ namespace App\Http\Controllers\API\Nasabah;
 use App\Http\Controllers\Controller;
 use App\Models\BankSampah;
 use App\Models\KatalogSampah;
+use App\Models\SubKategoriSampah;
+use App\Models\KategoriSampah;
 use App\Models\JamOperasionalBankSampah;
 use App\Models\MemberBankSampah;
 use Illuminate\Http\Request;
@@ -125,7 +127,7 @@ class ProfilBankSampahController extends Controller
         }
 
         $validator = Validator::make($request->all(), [
-            'kategori_sampah' => 'nullable|string|in:kering,basah',
+            'kode_kategori' => 'nullable|string|in:kering,basah',
         ]);
 
         if ($validator->fails()) {
@@ -145,13 +147,22 @@ class ProfilBankSampahController extends Controller
             ], 404);
         }
 
-        $query = KatalogSampah::where('bank_sampah_id', $bankSampahId)
-                              ->where('status', 'aktif'); // Hanya ambil katalog aktif
+        // Query katalog sampah dengan sistem baru (sub kategori)
+        $query = KatalogSampah::with('subKategori.kategoriSampah')
+                              ->where('bank_sampah_id', $bankSampahId)
+                              ->where('status_aktif', true);
 
         // Filter berdasarkan kategori jika ada
-        if ($request->has('kategori_sampah')) {
-            $kategori = $request->kategori_sampah === 'kering' ? 0 : 1;
-            $query->where('kategori_sampah', $kategori);
+        if ($request->has('kode_kategori')) {
+            $kodeKategori = $request->kode_kategori;
+
+            // Jika katalog belum migrasi ke sistem baru (masih menggunakan kategori_sampah lama)
+            if ($this->isUsingOldKategoriSystem($bankSampahId)) {
+                $kategoriValue = $kodeKategori === 'kering' ? 0 : 1;
+                $query->where('kategori_sampah', $kategoriValue);
+            } else {
+                $query->byKategoriUtama($kodeKategori);
+            }
         }
 
         $katalogSampah = $query->get();
@@ -160,20 +171,142 @@ class ProfilBankSampahController extends Controller
         $formattedKatalog = $katalogSampah->map(function($item) {
             return [
                 'id' => $item->id,
-                'nama_sampah' => $item->nama_sampah,
-                'kategori_sampah' => $item->kategori_sampah == 0 ? 'Kering' : 'Basah',
+                'nama_item_sampah' => $item->nama_item_sampah,
+                'kategori_sampah' => $item->kategoriSampahText,
+                'sub_kategori' => $item->subKategoriText,
                 'harga_per_kg' => $item->harga_per_kg,
-                'keterangan' => $item->keterangan,
-                'status' => $item->status,
+                'harga_format' => 'Rp ' . number_format($item->harga_per_kg, 0, ',', '.'),
+                'deskripsi_item_sampah' => $item->deskripsi_item_sampah,
+                'gambar_item_sampah' => $item->gambar_item_sampah ? url('storage/' . $item->gambar_item_sampah) : null,
+                'status_aktif' => $item->status_aktif,
                 'created_at' => $item->created_at->format('Y-m-d H:i:s'),
                 'updated_at' => $item->updated_at->format('Y-m-d H:i:s')
             ];
         });
 
+        // Dapatkan juga daftar sub kategori untuk filter
+        $subKategoriList = [];
+        if ($request->has('kode_kategori')) {
+            $kategori = KategoriSampah::where('kode_kategori', $request->kode_kategori)->first();
+            if ($kategori) {
+                $subKategoriList = SubKategoriSampah::where('bank_sampah_id', $bankSampahId)
+                    ->where('kategori_sampah_id', $kategori->id)
+                    ->where('status_aktif', true)
+                    ->ordered()
+                    ->get()
+                    ->map(function($item) use ($katalogSampah) {
+                        // Hitung jumlah item di setiap sub kategori
+                        $jumlahItem = $katalogSampah->where('sub_kategori_sampah_id', $item->id)->count();
+                        return [
+                            'id' => $item->id,
+                            'nama_sub_kategori' => $item->nama_sub_kategori,
+                            'kode_sub_kategori' => $item->kode_sub_kategori,
+                            'warna' => $item->warna,
+                            'jumlah_item' => $jumlahItem
+                        ];
+                    });
+            }
+        }
+
         return response()->json([
             'status' => 'success',
             'message' => 'Katalog sampah berhasil diambil',
-            'data' => $formattedKatalog
+            'data' => [
+                'katalog_sampah' => $formattedKatalog,
+                'sub_kategori' => $subKategoriList
+            ]
+        ]);
+    }
+
+    /**
+     * Mendapatkan data sub kategori sampah berdasarkan kategori utama.
+     *
+     * @param  \Illuminate\Http\Request  $request
+     * @param  int  $bankSampahId
+     * @return \Illuminate\Http\Response
+     */
+    public function getSubKategoriSampah(Request $request, $bankSampahId)
+    {
+        $user = $request->user();
+
+        if (!$user->isNasabah()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Akses ditolak. Anda bukan nasabah.',
+            ], 403);
+        }
+
+        $validator = Validator::make($request->all(), [
+            'kode_kategori' => 'required|string|in:kering,basah',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Validasi gagal',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        $bankSampah = BankSampah::find($bankSampahId);
+
+        if (!$bankSampah) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Bank sampah tidak ditemukan',
+            ], 404);
+        }
+
+        // Dapatkan kategori berdasarkan kode
+        $kategori = KategoriSampah::where('kode_kategori', $request->kode_kategori)->first();
+        if (!$kategori) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Kategori sampah tidak valid'
+            ], 422);
+        }
+
+        // Query sub kategori
+        $subKategoriList = SubKategoriSampah::where('bank_sampah_id', $bankSampahId)
+            ->where('kategori_sampah_id', $kategori->id)
+            ->where('status_aktif', true)
+            ->ordered()
+            ->get();
+
+        // Jika tidak ada sub kategori, buat sub kategori default "Umum"
+        if ($subKategoriList->isEmpty()) {
+            $subKategori = SubKategoriSampah::create([
+                'bank_sampah_id' => $bankSampahId,
+                'kategori_sampah_id' => $kategori->id,
+                'nama_sub_kategori' => 'Umum',
+                'kode_sub_kategori' => 'umum',
+                'deskripsi' => 'Semua jenis sampah ' . $kategori->nama_kategori,
+                'warna' => $kategori->kode_kategori === 'kering' ? '#2196F3' : '#4CAF50',
+                'urutan' => 1,
+                'status_aktif' => true,
+            ]);
+
+            $subKategoriList = collect([$subKategori]);
+        }
+
+        // Hitung jumlah item di setiap sub kategori
+        foreach ($subKategoriList as $subKategori) {
+            $subKategori->jumlah_item = KatalogSampah::where('sub_kategori_sampah_id', $subKategori->id)
+                ->where('status_aktif', true)
+                ->count();
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Sub kategori sampah berhasil diambil',
+            'data' => [
+                'kategori' => [
+                    'id' => $kategori->id,
+                    'nama_kategori' => $kategori->nama_kategori,
+                    'kode_kategori' => $kategori->kode_kategori,
+                ],
+                'sub_kategori' => $subKategoriList
+            ]
         ]);
     }
 
@@ -327,23 +460,59 @@ class ProfilBankSampahController extends Controller
      */
     private function getKategoriSampah($bankSampahId)
     {
-        $kategoriKering = KatalogSampah::where('bank_sampah_id', $bankSampahId)
-            ->where('kategori_sampah', 0)
+        // Cek kategori menggunakan sistem baru - sub kategori
+        $subKategoriKering = SubKategoriSampah::where('bank_sampah_id', $bankSampahId)
+            ->whereHas('kategoriSampah', function($q) {
+                $q->where('kode_kategori', 'kering');
+            })
             ->exists();
 
-        $kategoriBasah = KatalogSampah::where('bank_sampah_id', $bankSampahId)
-            ->where('kategori_sampah', 1)
+        $subKategoriBasah = SubKategoriSampah::where('bank_sampah_id', $bankSampahId)
+            ->whereHas('kategoriSampah', function($q) {
+                $q->where('kode_kategori', 'basah');
+            })
             ->exists();
 
-        if ($kategoriKering && $kategoriBasah) {
+        // Jika sub kategori belum ada, gunakan cara lama (kompatibilitas)
+        if (!$subKategoriKering && !$subKategoriBasah) {
+            $kategoriKering = KatalogSampah::where('bank_sampah_id', $bankSampahId)
+                ->where('kategori_sampah', 0)
+                ->exists();
+
+            $kategoriBasah = KatalogSampah::where('bank_sampah_id', $bankSampahId)
+                ->where('kategori_sampah', 1)
+                ->exists();
+
+            $subKategoriKering = $kategoriKering;
+            $subKategoriBasah = $kategoriBasah;
+        }
+
+        if ($subKategoriKering && $subKategoriBasah) {
             return 'Kering & Basah';
-        } elseif ($kategoriKering) {
+        } elseif ($subKategoriKering) {
             return 'Kering';
-        } elseif ($kategoriBasah) {
+        } elseif ($subKategoriBasah) {
             return 'Basah';
         } else {
             return 'Tidak ada data';
         }
+    }
+
+    /**
+     * Memeriksa apakah bank sampah masih menggunakan sistem kategori lama
+     *
+     * @param int $bankSampahId
+     * @return bool
+     */
+    private function isUsingOldKategoriSystem($bankSampahId)
+    {
+        // Periksa apakah ada katalog yang sudah menggunakan sub_kategori_sampah_id
+        $hasMigratedItems = KatalogSampah::where('bank_sampah_id', $bankSampahId)
+            ->whereNotNull('sub_kategori_sampah_id')
+            ->exists();
+
+        // Jika tidak ada yang migrasi, berarti masih menggunakan sistem lama
+        return !$hasMigratedItems;
     }
 
     /**

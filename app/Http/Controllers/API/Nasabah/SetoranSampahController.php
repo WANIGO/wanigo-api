@@ -18,6 +18,12 @@ use Carbon\Carbon;
 
 class SetoranSampahController extends Controller
 {
+    // Status constants
+    const STATUS_PENGAJUAN = 'Pengajuan';
+    const STATUS_DIPROSES = 'Diproses';
+    const STATUS_SELESAI = 'Selesai';
+    const STATUS_BATAL = 'Dibatalkan';
+
     /**
      * Mendapatkan daftar setoran sampah milik nasabah.
      *
@@ -31,8 +37,8 @@ class SetoranSampahController extends Controller
             ->with(['bankSampah', 'detailSetoran']);
 
         // Filter berdasarkan status
-        if ($request->has('status')) {
-            $query->where('status', $request->status);
+        if ($request->has('status_setoran')) {
+            $query->where('status_setoran', $request->status_setoran);
         }
 
         // Filter berdasarkan bank sampah
@@ -51,6 +57,13 @@ class SetoranSampahController extends Controller
 
         $setoran = $query->orderBy('created_at', 'desc')->paginate(10);
 
+        // Format data untuk tampilan di aplikasi
+        foreach ($setoran as $item) {
+            $item->total_berat_format = number_format($item->total_berat, 2, ',', '.') . ' kg';
+            $item->total_nilai_format = 'Rp ' . number_format($item->total_saldo, 0, ',', '.');
+            $item->jumlah_item = $item->detailSetoran->count();
+        }
+
         return response()->json([
             'success' => true,
             'data' => $setoran
@@ -58,21 +71,68 @@ class SetoranSampahController extends Controller
     }
 
     /**
-     * Membuat setoran sampah baru.
+     * Mendapatkan daftar bank sampah yang terdaftar oleh nasabah.
+     *
+     * @return \Illuminate\Http\Response
+     */
+    public function getMemberBankSampah()
+    {
+        $userId = Auth::id();
+
+        $memberBankSampah = MemberBankSampah::where('user_id', $userId)
+            ->where('status_keanggotaan', 'aktif')
+            ->with('bankSampah')
+            ->get();
+
+        if ($memberBankSampah->isEmpty()) {
+            return response()->json([
+                'success' => true,
+                'is_member' => false,
+                'message' => 'Anda belum terdaftar di bank sampah manapun',
+                'data' => []
+            ]);
+        }
+
+        // Format data bank sampah untuk tampilan
+        $bankSampahList = [];
+        foreach ($memberBankSampah as $member) {
+            $bankSampah = $member->bankSampah;
+
+            // Periksa jam operasional
+            $statusOperasional = $bankSampah->status_operasional ? 'Aktif' : 'Tutup';
+
+            $bankSampahList[] = [
+                'id' => $bankSampah->id,
+                'nama' => $bankSampah->nama_bank_sampah,
+                'alamat' => $bankSampah->alamat_bank_sampah,
+                'status_operasional' => $statusOperasional,
+                'jam_operasional' => $bankSampah->jam_operasional,
+                'kode_member' => $member->kode_member,
+                'tanggal_bergabung' => $member->created_at->format('d-m-Y')
+            ];
+        }
+
+        return response()->json([
+            'success' => true,
+            'is_member' => true,
+            'data' => $bankSampahList
+        ]);
+    }
+
+    /**
+     * Membuat pengajuan setoran sampah baru (tanpa berat).
      *
      * @param Request $request
      * @return \Illuminate\Http\Response
      */
-    public function store(Request $request)
+    public function createPengajuan(Request $request)
     {
         $validator = Validator::make($request->all(), [
             'bank_sampah_id' => 'required|exists:bank_sampah,id',
             'tanggal_setoran' => 'required|date_format:Y-m-d',
             'waktu_setoran' => 'required|date_format:H:i',
-            'detail_setoran' => 'required|array',
-            'detail_setoran.*.katalog_sampah_id' => 'required|exists:katalog_sampah,id',
-            'detail_setoran.*.berat' => 'required|numeric|min:0.1',
-            'detail_setoran.*.foto' => 'sometimes|image|mimes:jpeg,png,jpg|max:2048',
+            'item_ids' => 'required|array',
+            'item_ids.*' => 'required|exists:katalog_sampah,id',
             'catatan' => 'sometimes|string|max:255',
         ]);
 
@@ -99,42 +159,33 @@ class SetoranSampahController extends Controller
             ], 422);
         }
 
-        // Cek apakah tanggal setoran valid dengan jadwal bank sampah
-        $bankSampah = BankSampah::find($bankSampahId);
-        $tanggalSetoran = Carbon::parse($request->tanggal_setoran);
-
-        if ($bankSampah->tanggal_setoran && !$this->isTanggalSetoranValid($tanggalSetoran, $bankSampah->tanggal_setoran)) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Tanggal setoran tidak sesuai dengan jadwal setoran bank sampah'
-            ], 422);
-        }
-
         DB::beginTransaction();
         try {
+            // Dapatkan bank sampah untuk informasi kode
+            $bankSampah = BankSampah::find($bankSampahId);
+
+            // Generate kode setoran
+            $kodeSetoran = $this->generateKodeSetoran($bankSampah->kode_bank_sampah);
+
             // Buat record setoran baru
-            $kodeSetoran = $this->generateKodeSetoran();
             $setoran = new SetoranSampah();
-            $setoran->kode_setoran = $kodeSetoran;
+            $setoran->kode_setoran_sampah = $kodeSetoran;
             $setoran->user_id = $userId;
             $setoran->bank_sampah_id = $bankSampahId;
             $setoran->tanggal_setoran = $request->tanggal_setoran;
             $setoran->waktu_setoran = $request->waktu_setoran;
-            $setoran->status = 'menunggu_konfirmasi';
-            $setoran->catatan = $request->catatan;
-            $setoran->total_berat = 0; // Akan diupdate setelah detail diproses
-            $setoran->total_nilai = 0; // Akan diupdate setelah detail diproses
+            $setoran->status_setoran = self::STATUS_PENGAJUAN;
+            $setoran->catatan_status_setoran = $request->catatan;
+            $setoran->total_berat = 0; // Belum ada berat pada tahap pengajuan
+            $setoran->total_saldo = 0; // Belum ada nilai pada tahap pengajuan
             $setoran->save();
 
             // Buat log status
-            $this->createSetoranLog($setoran->id, 'menunggu_konfirmasi', 'Pengajuan setoran dibuat');
+            $this->createSetoranLog($setoran->id, self::STATUS_PENGAJUAN, 'Pengajuan setoran dibuat');
 
-            // Proses detail setoran
-            $totalBerat = 0;
-            $totalNilai = 0;
-
-            foreach ($request->detail_setoran as $detail) {
-                $katalogSampah = KatalogSampah::find($detail['katalog_sampah_id']);
+            // Proses detail setoran untuk setiap item yang dipilih
+            foreach ($request->item_ids as $itemId) {
+                $katalogSampah = KatalogSampah::find($itemId);
 
                 if (!$katalogSampah || $katalogSampah->bank_sampah_id != $bankSampahId) {
                     throw new \Exception('Katalog sampah tidak valid atau tidak terdaftar di bank sampah ini');
@@ -142,40 +193,31 @@ class SetoranSampahController extends Controller
 
                 $detailSetoran = new DetailSetoran();
                 $detailSetoran->setoran_sampah_id = $setoran->id;
-                $detailSetoran->katalog_sampah_id = $detail['katalog_sampah_id'];
-                $detailSetoran->berat = $detail['berat'];
-                $detailSetoran->harga_per_kg = $katalogSampah->harga_per_kg;
-                $detailSetoran->nilai = $detail['berat'] * $katalogSampah->harga_per_kg;
-
-                // Proses foto jika ada
-                if (isset($detail['foto']) && $detail['foto']) {
-                    $path = $detail['foto']->store('setoran_sampah', 'public');
-                    $detailSetoran->foto = $path;
-                }
-
+                $detailSetoran->item_sampah_id = $itemId;
+                $detailSetoran->berat = 0; // Belum ada berat pada tahap pengajuan
+                $detailSetoran->saldo = 0; // Belum ada nilai pada tahap pengajuan
                 $detailSetoran->save();
-
-                $totalBerat += $detail['berat'];
-                $totalNilai += $detailSetoran->nilai;
             }
-
-            // Update total berat dan nilai setoran
-            $setoran->total_berat = $totalBerat;
-            $setoran->total_nilai = $totalNilai;
-            $setoran->save();
 
             DB::commit();
 
             return response()->json([
                 'success' => true,
-                'message' => 'Setoran sampah berhasil dibuat dan menunggu konfirmasi dari bank sampah',
-                'data' => $setoran->load('detailSetoran')
+                'message' => 'Pengajuan setoran sampah berhasil dibuat dan menunggu diproses oleh bank sampah',
+                'data' => [
+                    'id' => $setoran->id,
+                    'kode_setoran' => $setoran->kode_setoran_sampah,
+                    'status_setoran' => $setoran->status_setoran,
+                    'tanggal_setoran' => $setoran->tanggal_setoran,
+                    'waktu_setoran' => $setoran->waktu_setoran,
+                    'jumlah_item' => count($request->item_ids)
+                ]
             ]);
         } catch (\Exception $e) {
             DB::rollback();
             return response()->json([
                 'success' => false,
-                'message' => 'Gagal membuat setoran sampah: ' . $e->getMessage()
+                'message' => 'Gagal membuat pengajuan setoran sampah: ' . $e->getMessage()
             ], 500);
         }
     }
@@ -201,9 +243,58 @@ class SetoranSampahController extends Controller
             ], 404);
         }
 
+        // Format data untuk tampilan di aplikasi
+        $setoran->total_berat_format = number_format($setoran->total_berat, 2, ',', '.') . ' kg';
+        $setoran->total_nilai_format = 'Rp ' . number_format($setoran->total_saldo, 0, ',', '.');
+        $setoran->total_poin = floor($setoran->total_saldo / 1000);
+
+        // Format detail item dan kelompokkan berdasarkan sub kategori
+        $detailBySubKategori = [];
+
+        foreach ($setoran->detailSetoran as $detail) {
+            $detail->berat_format = number_format($detail->berat, 2, ',', '.') . ' kg';
+            $detail->saldo_format = 'Rp ' . number_format($detail->saldo, 0, ',', '.');
+
+            if ($detail->foto) {
+                $detail->foto_url = url('storage/' . $detail->foto);
+            }
+
+            // Kelompokkan berdasarkan sub kategori
+            $subKategoriId = $detail->katalogSampah->sub_kategori_sampah_id ?? 'none';
+            $subKategoriName = $detail->katalogSampah->subKategori ?
+                $detail->katalogSampah->subKategori->nama_sub_kategori : 'Lainnya';
+
+            if (!isset($detailBySubKategori[$subKategoriId])) {
+                $detailBySubKategori[$subKategoriId] = [
+                    'id' => $subKategoriId,
+                    'nama' => $subKategoriName,
+                    'items' => []
+                ];
+            }
+
+            $detailBySubKategori[$subKategoriId]['items'][] = $detail;
+        }
+
+        // Prepare timeline status
+        $timeline = [];
+        foreach ($setoran->setoranLog as $log) {
+            $timeline[] = [
+                'status_setoran' => $log->status_setoran,
+                'tanggal' => $log->created_at->format('d M Y'),
+                'waktu' => $log->created_at->format('H:i'),
+                'keterangan' => $log->catatan
+            ];
+        }
+
         return response()->json([
             'success' => true,
-            'data' => $setoran
+            'data' => [
+                'setoran' => $setoran,
+                'item_by_sub_kategori' => array_values($detailBySubKategori),
+                'timeline' => $timeline,
+                'is_editable' => $setoran->status_setoran === self::STATUS_PENGAJUAN,
+                'is_cancelable' => $this->isSetoranCancelable($setoran)
+            ]
         ]);
     }
 
@@ -227,20 +318,28 @@ class SetoranSampahController extends Controller
             ], 404);
         }
 
-        if ($setoran->status !== 'menunggu_konfirmasi') {
+        if ($setoran->status_setoran !== self::STATUS_PENGAJUAN) {
             return response()->json([
                 'success' => false,
-                'message' => 'Hanya setoran dengan status menunggu konfirmasi yang dapat dibatalkan'
+                'message' => 'Hanya setoran dengan status pengajuan yang dapat dibatalkan'
+            ], 422);
+        }
+
+        // Validasi batas waktu pembatalan (hanya boleh dibatalkan dalam 24 jam setelah pengajuan)
+        if (!$this->isSetoranCancelable($setoran)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Setoran tidak dapat dibatalkan karena sudah lebih dari 24 jam sejak pengajuan'
             ], 422);
         }
 
         DB::beginTransaction();
         try {
-            $setoran->status = 'dibatalkan';
+            $setoran->status_setoran = self::STATUS_BATAL;
             $setoran->save();
 
             // Buat log status
-            $this->createSetoranLog($setoran->id, 'dibatalkan', 'Setoran dibatalkan oleh nasabah');
+            $this->createSetoranLog($setoran->id, self::STATUS_BATAL, 'Setoran dibatalkan oleh nasabah');
 
             DB::commit();
 
@@ -259,8 +358,37 @@ class SetoranSampahController extends Controller
     }
 
     /**
-     * Mendapatkan history setoran sampah.
+     * Mendapatkan list setoran "berlangsung" (pengajuan dan diproses).
      *
+     * @return \Illuminate\Http\Response
+     */
+    public function ongoing()
+    {
+        $userId = Auth::id();
+        $setoran = SetoranSampah::where('user_id', $userId)
+            ->whereIn('status_setoran', [self::STATUS_PENGAJUAN, self::STATUS_DIPROSES])
+            ->with(['bankSampah', 'detailSetoran'])
+            ->orderBy('tanggal_setoran', 'desc')
+            ->paginate(10);
+
+        // Format data untuk tampilan di aplikasi
+        foreach ($setoran as $item) {
+            $item->total_berat_format = number_format($item->total_berat, 2, ',', '.') . ' kg';
+            $item->total_nilai_format = 'Rp ' . number_format($item->total_saldo, 0, ',', '.');
+            $item->jumlah_item = $item->detailSetoran->count();
+            $item->is_cancelable = $this->isSetoranCancelable($item);
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => $setoran
+        ]);
+    }
+
+    /**
+     * Mendapatkan list riwayat setoran (selesai dan batal).
+     *
+     * @param Request $request
      * @return \Illuminate\Http\Response
      */
     public function history(Request $request)
@@ -270,11 +398,11 @@ class SetoranSampahController extends Controller
             ->with(['bankSampah']);
 
         // Filter berdasarkan status
-        if ($request->has('status')) {
-            $query->where('status', $request->status);
+        if ($request->has('status_setoran') && in_array($request->status_setoran, [self::STATUS_SELESAI, self::STATUS_BATAL])) {
+            $query->where('status_setoran', $request->status_setoran);
         } else {
-            // Default hanya menampilkan yang sudah selesai atau dibatalkan
-            $query->whereIn('status', ['selesai', 'dibatalkan']);
+            // Default menampilkan yang sudah selesai atau dibatalkan
+            $query->whereIn('status_setoran', [self::STATUS_SELESAI, self::STATUS_BATAL]);
         }
 
         // Filter berdasarkan bank sampah
@@ -282,12 +410,16 @@ class SetoranSampahController extends Controller
             $query->where('bank_sampah_id', $request->bank_sampah_id);
         }
 
-        // Filter berdasarkan tanggal
-        if ($request->has('tanggal_mulai') && $request->has('tanggal_akhir')) {
-            $query->whereBetween('tanggal_setoran', [$request->tanggal_mulai, $request->tanggal_akhir]);
-        }
+        $history = $query->orderBy('tanggal_setoran', 'desc')
+            ->with('detailSetoran')
+            ->paginate(10);
 
-        $history = $query->orderBy('tanggal_setoran', 'desc')->paginate(10);
+        // Format data untuk tampilan di aplikasi
+        foreach ($history as $item) {
+            $item->total_berat_format = number_format($item->total_berat, 2, ',', '.') . ' kg';
+            $item->total_nilai_format = 'Rp ' . number_format($item->total_saldo, 0, ',', '.');
+            $item->jumlah_item = $item->detailSetoran->count();
+        }
 
         return response()->json([
             'success' => true,
@@ -296,122 +428,118 @@ class SetoranSampahController extends Controller
     }
 
     /**
-     * Mendapatkan statistik setoran sampah nasabah.
+     * Mendapatkan timeline status setoran.
      *
+     * @param int $id
      * @return \Illuminate\Http\Response
      */
-    public function statistics(Request $request)
+    public function getStatusTimeline($id)
     {
         $userId = Auth::id();
-
-        // Filter berdasarkan bank sampah
-        $bankSampahId = $request->bank_sampah_id;
-
-        // Filter berdasarkan periode
-        $periode = $request->periode ?? 'bulan_ini'; // bulan_ini, tahun_ini, semua
-
-        $query = SetoranSampah::where('user_id', $userId)
-            ->where('status', 'selesai');
-
-        if ($bankSampahId) {
-            $query->where('bank_sampah_id', $bankSampahId);
-        }
-
-        // Filter berdasarkan periode
-        if ($periode === 'bulan_ini') {
-            $query->whereMonth('tanggal_setoran', now()->month)
-                ->whereYear('tanggal_setoran', now()->year);
-        } elseif ($periode === 'tahun_ini') {
-            $query->whereYear('tanggal_setoran', now()->year);
-        }
-
-        // Hitung statistik
-        $totalSetoran = $query->count();
-        $totalBerat = $query->sum('total_berat');
-        $totalNilai = $query->sum('total_nilai');
-
-        // Dapatkan jenis sampah yang paling banyak disetor
-        $jenisSampahTerbanyak = DetailSetoran::select('katalog_sampah_id', DB::raw('SUM(berat) as total_berat'))
-            ->whereIn('setoran_sampah_id', function ($q) use ($userId, $bankSampahId, $periode) {
-                $q->select('id')
-                    ->from('setoran_sampah')
-                    ->where('user_id', $userId)
-                    ->where('status', 'selesai');
-
-                if ($bankSampahId) {
-                    $q->where('bank_sampah_id', $bankSampahId);
-                }
-
-                if ($periode === 'bulan_ini') {
-                    $q->whereMonth('tanggal_setoran', now()->month)
-                        ->whereYear('tanggal_setoran', now()->year);
-                } elseif ($periode === 'tahun_ini') {
-                    $q->whereYear('tanggal_setoran', now()->year);
-                }
-            })
-            ->groupBy('katalog_sampah_id')
-            ->orderBy('total_berat', 'desc')
-            ->with('katalogSampah')
+        $setoran = SetoranSampah::where('id', $id)
+            ->where('user_id', $userId)
             ->first();
+
+        if (!$setoran) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Setoran sampah tidak ditemukan'
+            ], 404);
+        }
+
+        // Ambil log status setoran
+        $logs = SetoranSampahLog::where('setoran_sampah_id', $id)
+            ->orderBy('created_at', 'asc')
+            ->get();
+
+        // Format timeline yang mudah dibaca
+        $timeline = [];
+        foreach ($logs as $log) {
+            $timeline[] = [
+                'status_setoran' => $log->status_setoran,
+                'tanggal' => $log->created_at->format('d M Y'),
+                'waktu' => $log->created_at->format('H:i'),
+                'keterangan' => $log->catatan,
+                'tanggal_lengkap' => $log->created_at->format('Y-m-d H:i:s')
+            ];
+        }
 
         return response()->json([
             'success' => true,
             'data' => [
-                'total_setoran' => $totalSetoran,
-                'total_berat' => $totalBerat,
-                'total_nilai' => $totalNilai,
-                'jenis_sampah_terbanyak' => $jenisSampahTerbanyak ? [
-                    'nama' => $jenisSampahTerbanyak->katalogSampah->nama_sampah,
-                    'total_berat' => $jenisSampahTerbanyak->total_berat
-                ] : null
+                'kode_setoran' => $setoran->kode_setoran_sampah,
+                'status_setoran_saat_ini' => $setoran->status_setoran,
+                'timeline' => $timeline
             ]
         ]);
     }
 
     /**
-     * Generate kode setoran unik
+     * Mendapatkan statistik ringkasan setoran sampah.
+     *
+     * @return \Illuminate\Http\Response
      */
-    private function generateKodeSetoran()
+    public function getDashboardStats()
     {
-        $prefix = 'ST';
-        $date = now()->format('Ymd');
-        $randomString = strtoupper(Str::random(4));
+        $userId = Auth::id();
 
-        return $prefix . $date . $randomString;
+        // Hitung jumlah setoran per status
+        $pengajuanCount = SetoranSampah::where('user_id', $userId)
+            ->where('status_setoran', self::STATUS_PENGAJUAN)
+            ->count();
+
+        $diprosesCount = SetoranSampah::where('user_id', $userId)
+            ->where('status_setoran', self::STATUS_DIPROSES)
+            ->count();
+
+        $selesaiCount = SetoranSampah::where('user_id', $userId)
+            ->where('status_setoran', self::STATUS_SELESAI)
+            ->count();
+
+        $batalCount = SetoranSampah::where('user_id', $userId)
+            ->where('status_setoran', self::STATUS_BATAL)
+            ->count();
+
+        // Hitung total berat dan nilai dari setoran yang selesai
+        $totalStats = SetoranSampah::where('user_id', $userId)
+            ->where('status_setoran', self::STATUS_SELESAI)
+            ->selectRaw('SUM(total_berat) as total_berat, SUM(total_saldo) as total_saldo')
+            ->first();
+
+        // Dapatkan setoran terakhir
+        $lastSetoran = SetoranSampah::where('user_id', $userId)
+            ->with('bankSampah')
+            ->orderBy('created_at', 'desc')
+            ->first();
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'jumlah_setoran' => [
+                    'pengajuan' => $pengajuanCount,
+                    'diproses' => $diprosesCount,
+                    'selesai' => $selesaiCount,
+                    'batal' => $batalCount,
+                    'total' => $pengajuanCount + $diprosesCount + $selesaiCount + $batalCount
+                ],
+                'total_statistik' => [
+                    'total_berat' => $totalStats ? $totalStats->total_berat : 0,
+                    'total_berat_format' => $totalStats ? number_format($totalStats->total_berat, 2, ',', '.') . ' kg' : '0 kg',
+                    'total_saldo' => $totalStats ? $totalStats->total_saldo : 0,
+                    'total_saldo_format' => $totalStats ? 'Rp ' . number_format($totalStats->total_saldo, 0, ',', '.') : 'Rp 0',
+                    'perkiraan_poin' => $totalStats ? floor($totalStats->total_saldo / 1000) : 0
+                ],
+                'setoran_terakhir' => $lastSetoran ? [
+                    'id' => $lastSetoran->id,
+                    'kode_setoran' => $lastSetoran->kode_setoran_sampah,
+                    'status_setoran' => $lastSetoran->status_setoran,
+                    'bank_sampah' => $lastSetoran->bankSampah ? $lastSetoran->bankSampah->nama_bank_sampah : null,
+                    'tanggal' => $lastSetoran->created_at->format('d M Y'),
+                    'total_nilai_format' => 'Rp ' . number_format($lastSetoran->total_saldo, 0, ',', '.')
+                ] : null
+            ]
+        ]);
     }
-
-    /**
-     * Membuat log status setoran
-     */
-    private function createSetoranLog($setoranId, $status, $keterangan = null)
-    {
-        $log = new SetoranSampahLog();
-        $log->setoran_sampah_id = $setoranId;
-        $log->status = $status;
-        $log->keterangan = $keterangan;
-        $log->created_by = Auth::id();
-        $log->save();
-
-        return $log;
-    }
-
-    /**
-     * Validasi tanggal setoran dengan jadwal bank sampah
-     */
-    private function isTanggalSetoranValid($tanggalSetoran, $jadwalBankSampah)
-    {
-        // Implementasi validasi tanggal setoran sesuai jadwal bank sampah
-        // Ini adalah contoh sederhana, mungkin perlu disesuaikan dengan logika bisnis
-
-        // Jika jadwal bank sampah adalah tanggal tertentu setiap bulan (misal tanggal 15)
-        if (is_numeric($jadwalBankSampah)) {
-            return $tanggalSetoran->day == $jadwalBankSampah;
-        }
-
-        // Jika jadwal bank sampah adalah hari tertentu dalam seminggu (misal 'Monday')
-        return $tanggalSetoran->format('l') == $jadwalBankSampah;
-    }
-
 
     /**
      * Mendapatkan katalog sampah berdasarkan bank sampah dan kategori.
@@ -423,7 +551,7 @@ class SetoranSampahController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'bank_sampah_id' => 'required|exists:bank_sampah,id',
-            'kategori' => 'sometimes|integer|in:0,1', // 0: Kering, 1: Basah
+            'kategori_sampah' => 'sometimes|integer|in:0,1', // 0: Kering, 1: Basah
         ]);
 
         if ($validator->fails()) {
@@ -433,18 +561,118 @@ class SetoranSampahController extends Controller
             ], 422);
         }
 
-        $query = KatalogSampah::where('bank_sampah_id', $request->bank_sampah_id)
-            ->where('status_aktif', true);
+        $bankSampahId = $request->bank_sampah_id;
 
-        if ($request->has('kategori')) {
-            $query->where('kategori_sampah', $request->kategori);
+        // Dapatkan informasi bank sampah
+        $bankSampah = BankSampah::find($bankSampahId);
+        if (!$bankSampah) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Bank sampah tidak ditemukan'
+            ], 404);
         }
 
-        $katalog = $query->get();
+        // Query katalog sampah
+        $query = KatalogSampah::where('bank_sampah_id', $bankSampahId)
+            ->where('status_aktif', true);
+
+        // Filter berdasarkan kategori jika ada
+        if ($request->has('kategori_sampah')) {
+            $query->where('kategori_sampah', $request->kategori_sampah);
+        }
+
+        $katalogSampah = $query->get();
+
+        // Hitung jumlah item per kategori
+        $jumlahKering = KatalogSampah::where('bank_sampah_id', $bankSampahId)
+            ->where('status_aktif', true)
+            ->where('kategori_sampah', 0)
+            ->count();
+
+        $jumlahBasah = KatalogSampah::where('bank_sampah_id', $bankSampahId)
+            ->where('status_aktif', true)
+            ->where('kategori_sampah', 1)
+            ->count();
 
         return response()->json([
             'success' => true,
-            'data' => $katalog
+            'data' => [
+                'bank_sampah' => [
+                    'id' => $bankSampah->id,
+                    'nama' => $bankSampah->nama_bank_sampah,
+                    'alamat' => $bankSampah->alamat_bank_sampah,
+                    'tanggal_setoran' => $bankSampah->tanggal_setoran,
+                    'status_operasional' => $bankSampah->status_operasional ? 'Aktif' : 'Tutup',
+                    'nomor_telepon' => $bankSampah->nomor_telepon_publik
+                ],
+                'katalog_sampah' => $katalogSampah,
+                'info_kategori' => [
+                    'jumlah_kering' => $jumlahKering,
+                    'jumlah_basah' => $jumlahBasah
+                ]
+            ]
         ]);
+    }
+
+    /**
+     * Generate kode setoran unik
+     * Format: [KODE_BANK_SAMPAH(3)][HURUF_ACAK(1)][ANGKA_URUT(6)]
+     */
+    private function generateKodeSetoran($kodeBankSampah)
+    {
+        // Ambil 3 huruf pertama kode bank sampah
+        $prefix = substr($kodeBankSampah, 0, 3);
+
+        // Generate 1 huruf acak A-Z
+        $randomLetter = chr(rand(65, 90)); // ASCII code for A-Z
+
+        // Dapatkan angka urut terakhir
+        $lastCode = SetoranSampah::where('kode_setoran_sampah', 'like', $prefix . $randomLetter . '%')
+            ->orderBy('id', 'desc')
+            ->value('kode_setoran_sampah');
+
+        $nextNum = 1;
+        if ($lastCode) {
+            // Extract angka dari kode terakhir
+            $lastNum = (int)substr($lastCode, 4);
+            $nextNum = $lastNum + 1;
+        }
+
+        // Format angka dengan 6 digit
+        $numStr = str_pad($nextNum, 6, '0', STR_PAD_LEFT);
+
+        return $prefix . $randomLetter . $numStr;
+    }
+
+    /**
+     * Membuat log status setoran
+     */
+    private function createSetoranLog($setoranId, $status, $keterangan = null)
+    {
+        $log = new SetoranSampahLog();
+        $log->setoran_sampah_id = $setoranId;
+        $log->status_setoran = $status;
+        $log->catatan = $keterangan;
+        $log->created_by = Auth::id();
+        $log->save();
+
+        return $log;
+    }
+
+    /**
+     * Cek apakah setoran masih bisa dibatalkan
+     * (hanya bisa dibatalkan dalam 24 jam setelah pengajuan dan status masih pengajuan)
+     */
+    private function isSetoranCancelable($setoran)
+    {
+        if ($setoran->status_setoran !== self::STATUS_PENGAJUAN) {
+            return false;
+        }
+
+        $createdTime = Carbon::parse($setoran->created_at);
+        $now = Carbon::now();
+        $hoursSinceCreation = $createdTime->diffInHours($now);
+
+        return $hoursSinceCreation <= 24;
     }
 }

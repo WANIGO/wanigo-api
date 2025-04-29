@@ -10,10 +10,12 @@ use App\Models\Modul;
 use App\Models\User;
 use App\Models\UserProgress;
 use App\Models\PointTransaction;
+use App\Models\ArtikelGallery;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 
 class EdukasiController extends Controller
 {
@@ -57,6 +59,7 @@ class EdukasiController extends Controller
                     'jumlah_konten' => $modul->kontens_count,
                     'estimasi_waktu' => $modul->estimasi_waktu,
                     'poin' => $modul->poin,
+                    'hero_image_url' => $modul->hero_image_url, // Tambahkan hero image URL
                     'progress' => round($progress, 2),
                     'is_completed' => $is_completed,
                 ];
@@ -139,6 +142,7 @@ class EdukasiController extends Controller
                 'deskripsi' => $modul->deskripsi,
                 'objektif_modul' => $modul->objektif_modul,
                 'benefit_modul' => $modul->benefit_modul,
+                'hero_image_url' => $modul->hero_image_url, // Tambahkan hero image URL
                 'jumlah_konten' => count($kontenList),
                 'estimasi_waktu' => $modul->estimasi_waktu, // total durasi dalam detik
                 'poin' => $modul->poin,
@@ -233,6 +237,7 @@ class EdukasiController extends Controller
                 'poin' => $konten->poin,
                 'modul_id' => $konten->modul_id,
                 'judul_modul' => $konten->modul->judul_modul,
+                'hero_image_url' => $konten->modul->hero_image_url, // Tambahkan hero image URL modul
                 'progress' => $userProgress->progress,
                 'is_completed' => $userProgress->status,
                 'other_kontens' => $otherKontens,
@@ -264,23 +269,29 @@ class EdukasiController extends Controller
      * @param int $id
      * @return \Illuminate\Http\JsonResponse
      */
-    public function getArtikelDetail($id)
+    public function getArtikelDetail(Request $request, $id)
     {
         try {
-            $user_id = Auth::id();
-            $user = User::findOrFail($user_id);
+            $user = $request->user();
 
-            // Periksa apakah pengguna aktif
-            if (!$user->is_active) {
+            // Pengecekan role seperti controller TaskFlow 4
+            if (!$user->isNasabah()) {
                 return response()->json([
                     'status' => 'error',
-                    'message' => 'Akun Anda tidak aktif.'
+                    'message' => 'Akses ditolak. Anda bukan nasabah.',
                 ], 403);
             }
 
-            $konten = Konten::with(['kontenArtikel', 'modul', 'kontenImages' => function ($query) {
-                $query->ordered();
-            }])->findOrFail($id);
+            $user_id = $user->id;
+
+            // Perbarui untuk menyertakan kontenArtikel dan galeri artikelnya
+            $konten = Konten::with([
+                'kontenArtikel',
+                'modul',
+                'kontenImages' => function ($query) {
+                    $query->ordered();
+                }
+            ])->findOrFail($id);
 
             if ($konten->tipe_konten !== 'artikel') {
                 return response()->json([
@@ -302,7 +313,7 @@ class EdukasiController extends Controller
                 $userProgress->save();
             }
 
-            // Dapatkan gambar pendukung artikel
+            // Dapatkan gambar pendukung artikel dari kontenImages
             $images = $konten->kontenImages->map(function ($image) {
                 return [
                     'id' => $image->id,
@@ -311,6 +322,22 @@ class EdukasiController extends Controller
                     'urutan' => $image->urutan,
                 ];
             });
+
+            // Dapatkan gambar gallery artikel dari ArtikelGallery
+            $galleries = [];
+            if ($konten->kontenArtikel) {
+                $galleries = ArtikelGallery::where('konten_artikel_id', $konten->kontenArtikel->id)
+                    ->ordered()
+                    ->get()
+                    ->map(function ($gallery) {
+                        return [
+                            'id' => $gallery->id,
+                            'image_url' => $gallery->image_url,
+                            'caption' => $gallery->caption,
+                            'urutan' => $gallery->urutan,
+                        ];
+                    });
+            }
 
             // Dapatkan konten lainnya dari modul yang sama
             $otherKontens = Konten::where('modul_id', $konten->modul_id)
@@ -337,9 +364,11 @@ class EdukasiController extends Controller
                 'poin' => $konten->poin,
                 'modul_id' => $konten->modul_id,
                 'judul_modul' => $konten->modul->judul_modul,
+                'hero_image_url' => $konten->modul->hero_image_url, // Tambahkan hero image URL modul
                 'progress' => $userProgress->progress,
                 'is_completed' => $userProgress->status,
-                'images' => $images,
+                'images' => $images, // Gambar pendukung konten
+                'galleries' => $galleries, // Galeri foto artikel
                 'other_kontens' => $otherKontens,
             ];
 
@@ -355,7 +384,9 @@ class EdukasiController extends Controller
                 'data' => $response
             ]);
         } catch (\Exception $e) {
-            Log::error('Error pada getArtikelDetail: ' . $e->getMessage());
+            Log::error('Error pada getArtikelDetail: ' . $e->getMessage(), [
+                'trace' => $e->getTraceAsString()
+            ]);
             return response()->json([
                 'status' => 'error',
                 'message' => 'Terjadi kesalahan saat mengambil detail artikel.',
@@ -385,16 +416,17 @@ class EdukasiController extends Controller
                 ], 400);
             }
 
-            $user_id = Auth::id();
-            $user = User::findOrFail($user_id);
+            $user = $request->user();
 
-            // Periksa apakah pengguna aktif
-            if (!$user->is_active) {
+            // Pengecekan role seperti controller TaskFlow 4
+            if (!$user->isNasabah()) {
                 return response()->json([
                     'status' => 'error',
-                    'message' => 'Akun Anda tidak aktif.'
+                    'message' => 'Akses ditolak. Anda bukan nasabah.',
                 ], 403);
             }
+
+            $user_id = $user->id;
 
             $konten = Konten::findOrFail($id);
 
@@ -475,16 +507,17 @@ class EdukasiController extends Controller
                 ], 400);
             }
 
-            $user_id = Auth::id();
-            $user = User::findOrFail($user_id);
+            $user = $request->user();
 
-            // Periksa apakah pengguna aktif
-            if (!$user->is_active) {
+            // Pengecekan role seperti controller TaskFlow 4
+            if (!$user->isNasabah()) {
                 return response()->json([
                     'status' => 'error',
-                    'message' => 'Akun Anda tidak aktif.'
+                    'message' => 'Akses ditolak. Anda bukan nasabah.',
                 ], 403);
             }
+
+            $user_id = $user->id;
 
             $konten = Konten::findOrFail($id);
 
@@ -548,19 +581,20 @@ class EdukasiController extends Controller
      *
      * @return \Illuminate\Http\JsonResponse
      */
-    public function getUserPoints()
+    public function getUserPoints(Request $request)
     {
         try {
-            $user_id = Auth::id();
-            $user = User::findOrFail($user_id);
+            $user = $request->user();
 
-            // Periksa apakah pengguna aktif
-            if (!$user->is_active) {
+            // Pengecekan role seperti controller TaskFlow 4
+            if (!$user->isNasabah()) {
                 return response()->json([
                     'status' => 'error',
-                    'message' => 'Akun Anda tidak aktif.'
+                    'message' => 'Akses ditolak. Anda bukan nasabah.',
                 ], 403);
             }
+
+            $user_id = $user->id;
 
             // Dapatkan transaksi poin
             $pointTransactions = PointTransaction::where('user_id', $user_id)
@@ -599,10 +633,10 @@ class EdukasiController extends Controller
      *
      * @return \Illuminate\Http\JsonResponse
      */
-    public function checkAuthStatus()
+    public function checkAuthStatus(Request $request)
     {
         try {
-            $user = Auth::user();
+            $user = $request->user();
 
             if (!$user) {
                 return response()->json([
@@ -637,6 +671,344 @@ class EdukasiController extends Controller
                 'status' => 'error',
                 'message' => 'Terjadi kesalahan saat memeriksa status autentikasi.',
                 'is_authenticated' => false
+            ], 500);
+        }
+    }
+
+    /**
+     * Upload hero image untuk modul.
+     *
+     * @param Request $request
+     * @param int $id
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function uploadModulHeroImage(Request $request, $id)
+    {
+        try {
+            $validator = Validator::make($request->all(), [
+                'hero_image' => 'required|image|mimes:jpeg,png,jpg|max:2048',
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => $validator->errors()->first()
+                ], 400);
+            }
+
+            // Cek apakah user memiliki akses admin (hanya admin yang bisa update modul)
+            // Sesuaikan dengan sistem autentikasi dan otorisasi aplikasi Anda
+            $user = $request->user();
+            if (!$user->hasRole('admin')) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Akses ditolak. Anda tidak memiliki izin untuk mengubah modul.'
+                ], 403);
+            }
+
+            $modul = Modul::findOrFail($id);
+
+            // Hapus gambar lama jika ada
+            if ($modul->hero_image_url) {
+                $oldPath = str_replace(Storage::url(''), '', $modul->hero_image_url);
+                if (Storage::disk('public')->exists($oldPath)) {
+                    Storage::disk('public')->delete($oldPath);
+                }
+            }
+
+            // Upload gambar baru
+            $image = $request->file('hero_image');
+            $imageName = time() . '_' . $image->getClientOriginalName();
+            $path = $image->storeAs('modul-images', $imageName, 'public');
+            $modul->hero_image_url = Storage::url($path);
+            $modul->save();
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Hero image berhasil diupload',
+                'data' => [
+                    'hero_image_url' => $modul->hero_image_url
+                ]
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error pada uploadModulHeroImage: ' . $e->getMessage());
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Terjadi kesalahan saat mengupload hero image.',
+            ], 500);
+        }
+    }
+
+/**
+     * Upload dan kelola galeri artikel.
+     *
+     * @param Request $request
+     * @param int $artikelId
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function uploadArtikelGallery(Request $request, $artikelId)
+    {
+        try {
+            $validator = Validator::make($request->all(), [
+                'image' => 'required|image|mimes:jpeg,png,jpg|max:2048',
+                'caption' => 'nullable|string|max:255',
+                'urutan' => 'nullable|integer'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => $validator->errors()->first()
+                ], 400);
+            }
+
+            // Cek apakah artikel ada
+            $kontenArtikel = KontenArtikel::findOrFail($artikelId);
+
+            // Cek apakah user memiliki akses admin (hanya admin yang bisa update konten)
+            $user = $request->user();
+            if (!$user->hasRole('admin')) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Akses ditolak. Anda tidak memiliki izin untuk mengubah konten artikel.'
+                ], 403);
+            }
+
+            // Upload gambar
+            $image = $request->file('image');
+            $imageName = time() . '_' . $image->getClientOriginalName();
+            $path = $image->storeAs('artikel-galleries', $imageName, 'public');
+            $imageUrl = Storage::url($path);
+
+            // Hitung urutan jika tidak disediakan
+            $urutan = $request->urutan ?? ArtikelGallery::where('konten_artikel_id', $artikelId)->max('urutan') + 1;
+
+            // Simpan data galeri
+            $gallery = ArtikelGallery::create([
+                'konten_artikel_id' => $artikelId,
+                'image_url' => $imageUrl,
+                'caption' => $request->caption,
+                'urutan' => $urutan
+            ]);
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Gambar berhasil diunggah ke galeri',
+                'data' => $gallery
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error pada uploadArtikelGallery: ' . $e->getMessage());
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Terjadi kesalahan saat mengunggah gambar ke galeri.',
+            ], 500);
+        }
+    }
+
+    /**
+     * Mendapatkan galeri artikel.
+     *
+     * @param int $artikelId
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function getArtikelGallery(Request $request, $artikelId)
+    {
+        try {
+            // Cek apakah artikel ada
+            $kontenArtikel = KontenArtikel::findOrFail($artikelId);
+
+            // Dapatkan galeri artikel
+            $galleries = ArtikelGallery::where('konten_artikel_id', $artikelId)
+                ->ordered()
+                ->get();
+
+            return response()->json([
+                'status' => 'success',
+                'data' => $galleries
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error pada getArtikelGallery: ' . $e->getMessage());
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Terjadi kesalahan saat mengambil data galeri artikel.',
+            ], 500);
+        }
+    }
+
+    /**
+     * Memperbarui informasi gambar galeri artikel.
+     *
+     * @param Request $request
+     * @param int $artikelId
+     * @param int $galleryId
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function updateArtikelGallery(Request $request, $artikelId, $galleryId)
+    {
+        try {
+            $validator = Validator::make($request->all(), [
+                'image' => 'nullable|image|mimes:jpeg,png,jpg|max:2048',
+                'caption' => 'nullable|string|max:255',
+                'urutan' => 'nullable|integer'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => $validator->errors()->first()
+                ], 400);
+            }
+
+            // Cek apakah user memiliki akses admin (hanya admin yang bisa update konten)
+            $user = $request->user();
+            if (!$user->hasRole('admin')) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Akses ditolak. Anda tidak memiliki izin untuk mengubah galeri artikel.'
+                ], 403);
+            }
+
+            // Cek apakah galeri ada
+            $gallery = ArtikelGallery::where('konten_artikel_id', $artikelId)
+                ->where('id', $galleryId)
+                ->firstOrFail();
+
+            // Update gambar jika ada
+            if ($request->hasFile('image')) {
+                // Hapus gambar lama jika bukan gambar default
+                if ($gallery->image_url) {
+                    $oldPath = str_replace(Storage::url(''), '', $gallery->image_url);
+                    if (Storage::disk('public')->exists($oldPath)) {
+                        Storage::disk('public')->delete($oldPath);
+                    }
+                }
+
+                // Upload gambar baru
+                $image = $request->file('image');
+                $imageName = time() . '_' . $image->getClientOriginalName();
+                $path = $image->storeAs('artikel-galleries', $imageName, 'public');
+                $gallery->image_url = Storage::url($path);
+            }
+
+            // Update data lain
+            if ($request->has('caption')) {
+                $gallery->caption = $request->caption;
+            }
+
+            if ($request->has('urutan')) {
+                $gallery->urutan = $request->urutan;
+            }
+
+            $gallery->save();
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Galeri berhasil diperbarui',
+                'data' => $gallery
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error pada updateArtikelGallery: ' . $e->getMessage());
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Terjadi kesalahan saat memperbarui galeri artikel.',
+            ], 500);
+        }
+    }
+
+    /**
+     * Menghapus gambar galeri artikel.
+     *
+     * @param int $artikelId
+     * @param int $galleryId
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function deleteArtikelGallery(Request $request, $artikelId, $galleryId)
+    {
+        try {
+            // Cek apakah user memiliki akses admin (hanya admin yang bisa update konten)
+            $user = $request->user();
+            if (!$user->hasRole('admin')) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Akses ditolak. Anda tidak memiliki izin untuk menghapus galeri artikel.'
+                ], 403);
+            }
+
+            // Cek apakah galeri ada
+            $gallery = ArtikelGallery::where('konten_artikel_id', $artikelId)
+                ->where('id', $galleryId)
+                ->firstOrFail();
+
+            // Hapus file gambar
+            if ($gallery->image_url) {
+                $path = str_replace(Storage::url(''), '', $gallery->image_url);
+                if (Storage::disk('public')->exists($path)) {
+                    Storage::disk('public')->delete($path);
+                }
+            }
+
+            $gallery->delete();
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Gambar berhasil dihapus dari galeri'
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error pada deleteArtikelGallery: ' . $e->getMessage());
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Terjadi kesalahan saat menghapus galeri artikel.',
+            ], 500);
+        }
+    }
+
+    /**
+     * Mengubah urutan gambar galeri artikel.
+     *
+     * @param Request $request
+     * @param int $artikelId
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function reorderArtikelGallery(Request $request, $artikelId)
+    {
+        try {
+            $validator = Validator::make($request->all(), [
+                'galleries' => 'required|array',
+                'galleries.*.id' => 'required|exists:artikel_galleries,id',
+                'galleries.*.urutan' => 'required|integer'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => $validator->errors()->first()
+                ], 400);
+            }
+
+            // Cek apakah user memiliki akses admin (hanya admin yang bisa update konten)
+            $user = $request->user();
+            if (!$user->hasRole('admin')) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Akses ditolak. Anda tidak memiliki izin untuk mengubah urutan galeri artikel.'
+                ], 403);
+            }
+
+            foreach ($request->galleries as $item) {
+                ArtikelGallery::where('id', $item['id'])
+                    ->where('konten_artikel_id', $artikelId)
+                    ->update(['urutan' => $item['urutan']]);
+            }
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Urutan galeri berhasil diperbarui'
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error pada reorderArtikelGallery: ' . $e->getMessage());
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Terjadi kesalahan saat memperbarui urutan galeri artikel.',
             ], 500);
         }
     }

@@ -4,6 +4,8 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class KatalogSampah extends Model
 {
@@ -13,7 +15,8 @@ class KatalogSampah extends Model
 
     protected $fillable = [
         'bank_sampah_id',
-        'kategori_sampah',
+        'sub_kategori_sampah_id',
+        'kategori_sampah', // Kolom lama, tetap disimpan untuk kompatibilitas
         'nama_item_sampah',
         'harga_per_kg',
         'deskripsi_item_sampah',
@@ -32,15 +35,23 @@ class KatalogSampah extends Model
     /**
      * Get the bank sampah that owns this katalog sampah.
      */
-    public function bankSampah()
+    public function bankSampah(): BelongsTo
     {
         return $this->belongsTo(BankSampah::class);
     }
 
     /**
+     * Get the sub kategori sampah for this item.
+     */
+    public function subKategori(): BelongsTo
+    {
+        return $this->belongsTo(SubKategoriSampah::class, 'sub_kategori_sampah_id');
+    }
+
+    /**
      * Get detail setoran for this item.
      */
-    public function detailSetoran()
+    public function detailSetoran(): HasMany
     {
         return $this->hasMany(DetailSetoran::class, 'item_sampah_id');
     }
@@ -59,6 +70,8 @@ class KatalogSampah extends Model
     /**
      * Scope a query to filter by kategori.
      *
+     * Compat method for old kategori field
+     *
      * @param  \Illuminate\Database\Eloquent\Builder  $query
      * @param  int  $kategori
      * @return \Illuminate\Database\Eloquent\Builder
@@ -66,6 +79,52 @@ class KatalogSampah extends Model
     public function scopeKategori($query, $kategori)
     {
         return $query->where('kategori_sampah', $kategori);
+    }
+
+    /**
+     * Scope to filter by sub kategori sampah id
+     */
+    public function scopeSubKategori($query, $subKategoriId)
+    {
+        return $query->where('sub_kategori_sampah_id', $subKategoriId);
+    }
+
+    /**
+     * Scope to filter items by the main kategori (kering/basah)
+     */
+    public function scopeByKategoriUtama($query, $kategoriKode)
+    {
+        return $query->whereHas('subKategori.kategoriSampah', function($q) use ($kategoriKode) {
+            $q->where('kode_kategori', $kategoriKode);
+        });
+    }
+
+    /**
+     * Scope untuk kategori kering
+     */
+    public function scopeKering($query)
+    {
+        // Cara baru menggunakan relasi
+        return $query->whereHas('subKategori.kategoriSampah', function($q) {
+            $q->where('kode_kategori', KategoriSampah::KERING);
+        });
+
+        // Atau cara lama sebagai fallback
+        // return $query->where('kategori_sampah', 0);
+    }
+
+    /**
+     * Scope untuk kategori basah
+     */
+    public function scopeBasah($query)
+    {
+        // Cara baru menggunakan relasi
+        return $query->whereHas('subKategori.kategoriSampah', function($q) {
+            $q->where('kode_kategori', KategoriSampah::BASAH);
+        });
+
+        // Atau cara lama sebagai fallback
+        // return $query->where('kategori_sampah', 1);
     }
 
     /**
@@ -85,6 +144,22 @@ class KatalogSampah extends Model
      */
     public function getKategoriSampahTextAttribute()
     {
-        return $this->kategori_sampah == 0 ? 'Kering' : 'Basah';
+        // Periksa apakah telah migrasi ke sistem baru
+        if ($this->subKategori && $this->subKategori->kategoriSampah) {
+            return $this->subKategori->kategoriSampah->nama_kategori;
+        }
+
+        // Fallback ke sistem lama
+        return $this->kategori_sampah == 0 ? 'Sampah Kering' : 'Sampah Basah';
+    }
+
+    /**
+     * Get nama sub kategori
+     *
+     * @return string
+     */
+    public function getSubKategoriTextAttribute()
+    {
+        return $this->subKategori ? $this->subKategori->nama_sub_kategori : '';
     }
 }

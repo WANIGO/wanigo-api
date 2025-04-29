@@ -27,6 +27,7 @@ class Modul extends Model
         'deskripsi',
         'objektif_modul',
         'benefit_modul',
+        'hero_image_url',
         'status',
         'jumlah_konten',
         'estimasi_waktu',

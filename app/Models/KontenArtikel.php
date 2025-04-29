@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class KontenArtikel extends Model
 {
@@ -34,6 +35,14 @@ class KontenArtikel extends Model
     public function konten(): BelongsTo
     {
         return $this->belongsTo(Konten::class, 'konten_id');
+    }
+
+    /**
+     * Mendapatkan galeri gambar terkait dengan artikel ini.
+     */
+    public function galleries(): HasMany
+    {
+        return $this->hasMany(ArtikelGallery::class, 'konten_artikel_id');
     }
 
     /**
