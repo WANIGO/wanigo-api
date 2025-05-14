@@ -4,6 +4,9 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Carbon\Carbon;
 
 class BankSampah extends Model
 {
@@ -12,7 +15,9 @@ class BankSampah extends Model
     protected $table = 'bank_sampah';
 
     protected $fillable = [
+        'tipe_bank_sampah_id',
         'nama_bank_sampah',
+        'kode_admin',
         'alamat_bank_sampah',
         'deskripsi',
         'latitude',
@@ -25,6 +30,10 @@ class BankSampah extends Model
         'nomor_telepon_publik',
         'foto_usaha',
         'tonase_sampah',
+        'provinsi_id',
+        'kabupaten_kota_id',
+        'kecamatan_id',
+        'kelurahan_desa_id',
     ];
 
     protected $casts = [
@@ -44,9 +53,49 @@ class BankSampah extends Model
     }
 
     /**
+     * Get the tipe bank sampah that owns the bank sampah.
+     */
+    public function tipeBankSampah(): BelongsTo
+    {
+        return $this->belongsTo(TipeBankSampah::class, 'tipe_bank_sampah_id');
+    }
+
+    /**
+     * Get the provinsi for this bank sampah.
+     */
+    public function provinsi(): BelongsTo
+    {
+        return $this->belongsTo(Provinsi::class);
+    }
+
+    /**
+     * Get the kabupaten/kota for this bank sampah.
+     */
+    public function kabupatenKota(): BelongsTo
+    {
+        return $this->belongsTo(KabupatenKota::class);
+    }
+
+    /**
+     * Get the kecamatan for this bank sampah.
+     */
+    public function kecamatan(): BelongsTo
+    {
+        return $this->belongsTo(Kecamatan::class);
+    }
+
+    /**
+     * Get the kelurahan/desa for this bank sampah.
+     */
+    public function kelurahanDesa(): BelongsTo
+    {
+        return $this->belongsTo(KelurahanDesa::class);
+    }
+
+    /**
      * Get the members of this bank sampah.
      */
-    public function members()
+    public function members(): HasMany
     {
         return $this->hasMany(MemberBankSampah::class);
     }
@@ -54,7 +103,7 @@ class BankSampah extends Model
     /**
      * Get all jam operasional for this bank sampah.
      */
-    public function jamOperasional()
+    public function jamOperasional(): HasMany
     {
         return $this->hasMany(JamOperasionalBankSampah::class);
     }
@@ -62,7 +111,7 @@ class BankSampah extends Model
     /**
      * Get the katalog sampah for this bank sampah.
      */
-    public function katalogSampah()
+    public function katalogSampah(): HasMany
     {
         return $this->hasMany(KatalogSampah::class);
     }
@@ -70,7 +119,7 @@ class BankSampah extends Model
     /**
      * Get the jadwal sampah for this bank sampah.
      */
-    public function jadwalSampah()
+    public function jadwalSampah(): HasMany
     {
         return $this->hasMany(JadwalSampah::class);
     }
@@ -78,9 +127,17 @@ class BankSampah extends Model
     /**
      * Get the setoran sampah for this bank sampah.
      */
-    public function setoranSampah()
+    public function setoranSampah(): HasMany
     {
         return $this->hasMany(SetoranSampah::class);
+    }
+
+    /**
+     * Get the sub kategori for this bank sampah.
+     */
+    public function subKategori(): HasMany
+    {
+        return $this->hasMany(SubKategoriSampah::class);
     }
 
     /**
@@ -121,6 +178,32 @@ class BankSampah extends Model
 
         $waktuSekarang = now()->format('H:i:s');
         return $waktuSekarang >= $jamOperasional->open_time && $waktuSekarang <= $jamOperasional->close_time;
+    }
+
+    /**
+     * Get alamat lengkap bank sampah.
+     */
+    public function getAlamatLengkapAttribute()
+    {
+        $alamat = $this->alamat_bank_sampah;
+
+        if ($this->kelurahanDesa) {
+            $alamat .= ', ' . $this->kelurahanDesa->nama_kelurahan_desa;
+        }
+
+        if ($this->kecamatan) {
+            $alamat .= ', ' . $this->kecamatan->nama_kecamatan;
+        }
+
+        if ($this->kabupatenKota) {
+            $alamat .= ', ' . $this->kabupatenKota->nama_kabupaten_kota;
+        }
+
+        if ($this->provinsi) {
+            $alamat .= ', ' . $this->provinsi->nama_provinsi;
+        }
+
+        return $alamat;
     }
 
     /**
