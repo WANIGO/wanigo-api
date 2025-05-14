@@ -110,6 +110,11 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('/penjualan-per-kategori', [LaporanSampahController::class, 'getPenjualanSampahPerKategori']);
             Route::post('/tren-penjualan', [LaporanSampahController::class, 'getTrenPenjualanSampah']);
             Route::post('/riwayat-penjualan', [LaporanSampahController::class, 'getRiwayatPenjualanSampah']);
+
+            // Endpoint Opsional untuk Optimasi (Tambahan)
+            Route::post('/dashboard', [LaporanSampahController::class, 'getDashboard']);
+            Route::get('/detail-item/{id}', [LaporanSampahController::class, 'getDetailItem']);
+            Route::get('/kode-warna-kategori', [LaporanSampahController::class, 'getKodeWarnaKategori']);
         });
 
         // Member Bank Sampah (sudah ada)
