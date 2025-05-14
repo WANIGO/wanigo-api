@@ -1,75 +1,31 @@
 <?php
 
-namespace App\Models;
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
 
-use Illuminate\Database\Eloquent\Factories\HasFactory;
-use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Database\Eloquent\Relations\HasMany;
-
-class KelurahanDesa extends Model
+return new class extends Migration
 {
-    use HasFactory;
-
-    protected $table = 'kelurahan_desa';
-
-    protected $fillable = [
-        'kecamatan_id',
-        'nama_kelurahan_desa',
-        'kode_kelurahan_desa',
-        'tipe', // 'kelurahan' atau 'desa'
-    ];
-
     /**
-     * Get the kecamatan that owns this kelurahan/desa.
+     * Run the migrations.
      */
-    public function kecamatan(): BelongsTo
+    public function up(): void
     {
-        return $this->belongsTo(Kecamatan::class);
+        Schema::create('kelurahan_desa', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('kecamatan_id')->constrained('kecamatan')->onDelete('cascade');
+            $table->string('nama_kelurahan_desa');
+            $table->string('kode_kelurahan_desa')->unique();
+            $table->enum('tipe', ['kelurahan', 'desa']);
+            $table->timestamps();
+        });
     }
 
     /**
-     * Get all bank sampah in this kelurahan/desa.
+     * Reverse the migrations.
      */
-    public function bankSampah(): HasMany
+    public function down(): void
     {
-        return $this->hasMany(BankSampah::class);
+        Schema::dropIfExists('kelurahan_desa');
     }
-
-    /**
-     * Get the kabupaten through kecamatan.
-     */
-    public function kabupatenKota()
-    {
-        return $this->hasOneThrough(
-            KabupatenKota::class,
-            Kecamatan::class,
-            'id', // Local key on kecamatan table
-            'id', // Local key on kabupaten_kota table
-            'kecamatan_id', // Foreign key on kelurahan_desa table
-            'kabupaten_kota_id' // Foreign key on kecamatan table
-        );
-    }
-
-    /**
-     * Scope a query to only include kelurahan type.
-     *
-     * @param  \Illuminate\Database\Eloquent\Builder  $query
-     * @return \Illuminate\Database\Eloquent\Builder
-     */
-    public function scopeKelurahan($query)
-    {
-        return $query->where('tipe', 'kelurahan');
-    }
-
-    /**
-     * Scope a query to only include desa type.
-     *
-     * @param  \Illuminate\Database\Eloquent\Builder  $query
-     * @return \Illuminate\Database\Eloquent\Builder
-     */
-    public function scopeDesa($query)
-    {
-        return $query->where('tipe', 'desa');
-    }
-}
+};
