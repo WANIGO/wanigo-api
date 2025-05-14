@@ -11,6 +11,7 @@ use App\Http\Controllers\API\Nasabah\DetailSetoranController;
 use App\Http\Controllers\API\Nasabah\SubKategoriSampahController;
 use App\Http\Controllers\API\Nasabah\JadwalSampahController;
 use App\Http\Controllers\API\Nasabah\ProfilBankSampahController;
+use App\Http\Controllers\API\Nasabah\LaporanSampahController;
 
 /*
 |--------------------------------------------------------------------------
@@ -92,6 +93,23 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('/check-registration', [JadwalSampahController::class, 'checkBankSampahRegistration']);
             Route::post('/calendar-view', [JadwalSampahController::class, 'getCalendarView']);
             Route::get('/bank-sampah-list', [JadwalSampahController::class, 'getNasabahBankSampahList']);
+        });
+
+        // Laporan Sampah (Fitur Baru)
+        Route::prefix('laporan-sampah')->group(function () {
+            Route::get('/bank-sampah-list', [LaporanSampahController::class, 'getBankSampahList']);
+            Route::get('/check-nasabah-status', [LaporanSampahController::class, 'checkNasabahStatus']);
+            Route::post('/summary', [LaporanSampahController::class, 'getLaporanSampahSummary']);
+
+            // Endpoint untuk tab Tonase Sampah
+            Route::post('/tonase-per-kategori', [LaporanSampahController::class, 'getTonaseSampahPerKategori']);
+            Route::post('/tren-tonase', [LaporanSampahController::class, 'getTrenTonaseSampah']);
+            Route::post('/riwayat-tonase', [LaporanSampahController::class, 'getRiwayatTonaseSampah']);
+
+            // Endpoint untuk tab Penjualan Sampah
+            Route::post('/penjualan-per-kategori', [LaporanSampahController::class, 'getPenjualanSampahPerKategori']);
+            Route::post('/tren-penjualan', [LaporanSampahController::class, 'getTrenPenjualanSampah']);
+            Route::post('/riwayat-penjualan', [LaporanSampahController::class, 'getRiwayatPenjualanSampah']);
         });
 
         // Member Bank Sampah (sudah ada)
