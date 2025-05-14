@@ -26,7 +26,7 @@ return new class extends Migration
             $table->timestamps();
 
             // Setiap tipe laporan harus unik per bank sampah dan periode
-            $table->unique(['bank_sampah_id', 'tipe_laporan', 'periode', 'tanggal_mulai', 'tanggal_akhir']);
+            $table->unique(['bank_sampah_id', 'tipe_laporan', 'periode', 'tanggal_mulai', 'tanggal_akhir'], 'laporan_sampah_unique_idx');
         });
     }
 
