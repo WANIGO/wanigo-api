@@ -5,10 +5,12 @@ namespace App\Http\Controllers\API\Nasabah;
 use App\Http\Controllers\Controller;
 use App\Models\BankSampah;
 use App\Models\MemberBankSampah;
+use App\Models\SetoranSampah;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\Log;
 
 class MemberBankSampahController extends Controller
 {
@@ -51,13 +53,12 @@ class MemberBankSampahController extends Controller
         $bankSampahList->map(function($item) use ($memberList) {
             $member = $memberList->where('bank_sampah_id', $item->id)->first();
             $item->kode_nasabah = $member ? $member->kode_nasabah : null;
-            $item->tanggal_bergabung = $member ? $member->created_at->format('Y-m-d') : null;
+            $item->tanggal_bergabung = $member ? $member->tanggal_daftar : null;
             $item->status_operasional = $item->isBukaHariIni() ? 'Aktif' : 'Tutup';
-            // Menghapus baris yang mengassign nilai ke dirinya sendiri
-            
+
             // Tambahkan status keanggotaan
-            $item->status_keanggotaan = $member ? $member->status : null;
-            
+            $item->status_keanggotaan = $member ? $member->status_keanggotaan : null;
+
             return $item;
         });
 
@@ -109,8 +110,8 @@ class MemberBankSampahController extends Controller
             'data' => [
                 'is_registered' => true,
                 'kode_nasabah' => $member->kode_nasabah,
-                'status' => $member->status,
-                'tanggal_bergabung' => $member->created_at->format('Y-m-d')
+                'status' => $member->status_keanggotaan,
+                'tanggal_bergabung' => $member->tanggal_daftar
             ]
         ]);
     }
@@ -123,77 +124,88 @@ class MemberBankSampahController extends Controller
      */
     public function registerMember(Request $request)
     {
-        $user = $request->user();
+        try {
+            $user = $request->user();
 
-        if (!$user->isNasabah()) {
-            return response()->json([
-                'status' => 'error',
-                'message' => 'Akses ditolak. Anda bukan nasabah.',
-            ], 403);
-        }
+            if (!$user->isNasabah()) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Akses ditolak. Anda bukan nasabah.',
+                ], 403);
+            }
 
-        $validator = Validator::make($request->all(), [
-            'bank_sampah_id' => 'required|exists:bank_sampah,id',
-        ]);
+            $validator = Validator::make($request->all(), [
+                'bank_sampah_id' => 'required|exists:bank_sampah,id',
+            ]);
 
-        if ($validator->fails()) {
-            return response()->json([
-                'status' => 'error',
-                'message' => 'Validasi gagal',
-                'errors' => $validator->errors(),
-            ], 422);
-        }
+            if ($validator->fails()) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Validasi gagal',
+                    'errors' => $validator->errors(),
+                ], 422);
+            }
 
-        // Cek apakah sudah terdaftar
-        $existingMember = MemberBankSampah::where('user_id', $user->id)
-            ->where('bank_sampah_id', $request->bank_sampah_id)
-            ->first();
+            // Cek apakah sudah terdaftar
+            $existingMember = MemberBankSampah::where('user_id', $user->id)
+                ->where('bank_sampah_id', $request->bank_sampah_id)
+                ->first();
 
-        if ($existingMember) {
-            return response()->json([
-                'status' => 'error',
-                'message' => 'Anda sudah terdaftar di bank sampah ini',
-                'data' => [
-                    'kode_nasabah' => $existingMember->kode_nasabah
-                ]
-            ], 422);
-        }
+            if ($existingMember) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Anda sudah terdaftar di bank sampah ini',
+                    'data' => [
+                        'kode_nasabah' => $existingMember->kode_nasabah
+                    ]
+                ], 422);
+            }
 
-        // Ambil data bank sampah
-        $bankSampah = BankSampah::find($request->bank_sampah_id);
-        if (!$bankSampah) {
-            return response()->json([
-                'status' => 'error',
-                'message' => 'Bank sampah tidak ditemukan',
-            ], 404);
-        }
+            // Ambil data bank sampah
+            $bankSampah = BankSampah::find($request->bank_sampah_id);
+            if (!$bankSampah) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Bank sampah tidak ditemukan',
+                ], 404);
+            }
 
-        // Generate kode nasabah unik
-        $prefix = strtoupper(substr(preg_replace('/[^a-zA-Z0-9]/', '', $bankSampah->nama_bank_sampah), 0, 3));
-        $randomCode = strtoupper(Str::random(3));
-        $timestamp = Carbon::now()->format('ymd');
-        $kodeNasabah = $prefix . $timestamp . $randomCode;
+            // Generate kode nasabah unik
+            $prefix = strtoupper(substr(preg_replace('/[^a-zA-Z0-9]/', '', $bankSampah->nama_bank_sampah), 0, 3));
+            $randomCode = strtoupper(Str::random(3));
+            $timestamp = Carbon::now()->format('ymd');
+            $kodeNasabah = $prefix . $timestamp . $randomCode;
 
-        // Buat member baru
-        $member = MemberBankSampah::create([
-            'user_id' => $user->id,
-            'bank_sampah_id' => $request->bank_sampah_id,
-            'kode_nasabah' => $kodeNasabah,
-            'status' => 'aktif',
-        ]);
-
-        // Update jumlah nasabah di bank sampah
-        $bankSampah->hitungJumlahNasabah();
-
-        return response()->json([
-            'status' => 'success',
-            'message' => 'Berhasil mendaftar sebagai nasabah bank sampah',
-            'data' => [
-                'member' => $member,
+            // Buat member baru sesuai dengan struktur tabel
+            $member = MemberBankSampah::create([
+                'user_id' => $user->id,
+                'bank_sampah_id' => $request->bank_sampah_id,
                 'kode_nasabah' => $kodeNasabah,
-                'bank_sampah' => $bankSampah
-            ]
-        ]);
+                'tanggal_daftar' => Carbon::now()->toDateString(),
+                'status_keanggotaan' => 'aktif',
+                'saldo' => 0.00
+            ]);
+
+            // Update jumlah nasabah di bank sampah
+            $this->updateJumlahNasabah($bankSampah);
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Berhasil mendaftar sebagai nasabah bank sampah',
+                'data' => [
+                    'member' => $member,
+                    'kode_nasabah' => $kodeNasabah,
+                    'bank_sampah' => $bankSampah
+                ]
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error pada registerMember: ' . $e->getMessage());
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Terjadi kesalahan pada server',
+                'debug_message' => $e->getMessage()
+            ], 500);
+        }
     }
 
     /**
@@ -205,48 +217,90 @@ class MemberBankSampahController extends Controller
      */
     public function removeMember(Request $request, $bankSampahId)
     {
-        $user = $request->user();
+        try {
+            $user = $request->user();
 
-        if (!$user->isNasabah()) {
+            if (!$user->isNasabah()) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Akses ditolak. Anda bukan nasabah.',
+                ], 403);
+            }
+
+            // Cek apakah terdaftar
+            $member = MemberBankSampah::where('user_id', $user->id)
+                ->where('bank_sampah_id', $bankSampahId)
+                ->first();
+
+            if (!$member) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Anda tidak terdaftar di bank sampah ini',
+                ], 404);
+            }
+
+            // Cek apakah ada setoran aktif
+            $hasActiveTransaction = $this->hasActiveTransactions($member);
+            if ($hasActiveTransaction) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Tidak dapat berhenti sebagai nasabah karena masih memiliki setoran aktif',
+                ], 422);
+            }
+
+            // Hapus keanggotaan
+            $member->delete();
+
+            // Update jumlah nasabah di bank sampah
+            $bankSampah = BankSampah::find($bankSampahId);
+            if ($bankSampah) {
+                $this->updateJumlahNasabah($bankSampah);
+            }
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Berhasil berhenti sebagai nasabah bank sampah',
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error pada removeMember: ' . $e->getMessage());
             return response()->json([
                 'status' => 'error',
-                'message' => 'Akses ditolak. Anda bukan nasabah.',
-            ], 403);
+                'message' => 'Terjadi kesalahan pada server',
+                'debug_message' => $e->getMessage()
+            ], 500);
         }
+    }
 
-        // Cek apakah terdaftar
-        $member = MemberBankSampah::where('user_id', $user->id)
-            ->where('bank_sampah_id', $bankSampahId)
-            ->first();
+    /**
+     * Memeriksa apakah member memiliki transaksi aktif.
+     *
+     * @param  \App\Models\MemberBankSampah  $member
+     * @return bool
+     */
+    private function hasActiveTransactions($member)
+    {
+        // Mengecek apakah ada setoran sampah dengan status yang masih aktif
+        $activeTransactions = SetoranSampah::where('user_id', $member->user_id)
+            ->where('bank_sampah_id', $member->bank_sampah_id)
+            ->whereIn('status_setoran', ['Pengajuan', 'Diproses'])
+            ->count();
 
-        if (!$member) {
-            return response()->json([
-                'status' => 'error',
-                'message' => 'Anda tidak terdaftar di bank sampah ini',
-            ], 404);
-        }
+        return $activeTransactions > 0;
+    }
 
-        // Cek apakah ada setoran aktif
-        $hasActiveTransaction = $member->hasActiveTransactions();
-        if ($hasActiveTransaction) {
-            return response()->json([
-                'status' => 'error',
-                'message' => 'Tidak dapat berhenti sebagai nasabah karena masih memiliki setoran aktif',
-            ], 422);
-        }
+    /**
+     * Memperbarui jumlah nasabah di bank sampah.
+     *
+     * @param  \App\Models\BankSampah  $bankSampah
+     * @return void
+     */
+    private function updateJumlahNasabah($bankSampah)
+    {
+        $jumlahNasabah = MemberBankSampah::where('bank_sampah_id', $bankSampah->id)
+            ->where('status_keanggotaan', 'aktif')
+            ->count();
 
-        // Hapus keanggotaan
-        $member->delete();
-
-        // Update jumlah nasabah di bank sampah
-        $bankSampah = BankSampah::find($bankSampahId);
-        if ($bankSampah) {
-            $bankSampah->hitungJumlahNasabah();
-        }
-
-        return response()->json([
-            'status' => 'success',
-            'message' => 'Berhasil berhenti sebagai nasabah bank sampah',
-        ]);
+        $bankSampah->jumlah_nasabah = $jumlahNasabah;
+        $bankSampah->save();
     }
 }
