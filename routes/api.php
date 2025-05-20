@@ -12,6 +12,7 @@ use App\Http\Controllers\API\Nasabah\SubKategoriSampahController;
 use App\Http\Controllers\API\Nasabah\JadwalSampahController;
 use App\Http\Controllers\API\Nasabah\ProfilBankSampahController;
 use App\Http\Controllers\API\Nasabah\LaporanSampahController;
+use App\Http\Controllers\API\Nasabah\BankSampahController;
 
 /*
 |--------------------------------------------------------------------------
@@ -35,6 +36,17 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Rute khusus nasabah
     Route::prefix('nasabah')->group(function () {
+        // Bank Sampah (Pencarian & Daftar Bank Sampah)
+        Route::prefix('bank-sampah')->group(function () {
+            Route::get('/', [BankSampahController::class, 'index']);
+            Route::get('/list', [BankSampahController::class, 'getBankSampahList']);
+            Route::get('/{id}', [BankSampahController::class, 'show']);
+            Route::get('/{id}/jam-operasional', [BankSampahController::class, 'getJamOperasional']);
+            Route::get('/{id}/katalog', [BankSampahController::class, 'getKatalogSampah']);
+            Route::post('/nearby', [BankSampahController::class, 'findNearby']);
+            Route::post('/map-filter', [BankSampahController::class, 'mapFilter']);
+        });
+        
         // Profil Nasabah
         Route::get('/profile', [ProfilNasabahController::class, 'getProfile']);
         Route::post('/profile/step1', [ProfilNasabahController::class, 'updateProfileStep1']);
@@ -52,7 +64,6 @@ Route::middleware('auth:sanctum')->group(function () {
         });
 
         // Profil Bank Sampah - Format singkat (Route tambahan baru)
-        Route::get('/bank-sampah/{id}', [ProfilBankSampahController::class, 'getBankSampah']);
         Route::get('/jam-operasional/{id}', [ProfilBankSampahController::class, 'getJamOperasional']);
         Route::get('/lokasi-bank/{id}', [ProfilBankSampahController::class, 'getLokasiBank']);
         Route::get('/kontak-bank/{id}', [ProfilBankSampahController::class, 'getKontakBank']);

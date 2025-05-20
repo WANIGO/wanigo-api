@@ -24,7 +24,7 @@ class BankSampahController extends Controller
         $query = BankSampah::query();
 
         // Filter berdasarkan keyword (nama bank sampah)
-        if ($request->has('keyword')) {
+        if ($request->has('keyword') && !empty($request->keyword)) {
             $keyword = $request->keyword;
             $query->where('nama_bank_sampah', 'like', "%{$keyword}%");
         }
@@ -55,9 +55,22 @@ class BankSampahController extends Controller
                 [$latitude, $longitude, $latitude])
                 ->having('distance', '<=', $radius)
                 ->orderBy('distance');
+        } else {
+            // Order by created_at DESC jika tidak ada filter jarak
+            $query->orderBy('created_at', 'DESC');
         }
 
-        $bankSampah = $query->get();
+        // Tentukan jumlah item yang akan diambil
+        $limit = $request->limit ?? 10; // Default 10 item
+
+        // Jika tidak ada keyword pencarian, batasi hasilnya
+        if (!$request->has('keyword') || empty($request->keyword)) {
+            $bankSampah = $query->limit($limit)->get();
+            $message = "Menampilkan {$bankSampah->count()} bank sampah terkini";
+        } else {
+            $bankSampah = $query->get();
+            $message = "Menampilkan {$bankSampah->count()} bank sampah untuk pencarian '{$request->keyword}'";
+        }
 
         // Tambahkan status keanggotaan untuk setiap bank sampah
         $userId = Auth::id();
@@ -72,7 +85,8 @@ class BankSampahController extends Controller
         return response()->json([
             'success' => true,
             'data' => $bankSampah,
-            'count' => $bankSampah->count()
+            'count' => $bankSampah->count(),
+            'message' => $message
         ]);
     }
 
@@ -283,14 +297,14 @@ class BankSampahController extends Controller
         }
 
         $query = KatalogSampah::where('bank_sampah_id', $id)
-                  ->where('status', 'aktif');
+                  ->where('status_aktif', true);
 
         // Filter berdasarkan kategori sampah
         if ($request->has('kategori_sampah')) {
             $query->where('kategori_sampah', $request->kategori_sampah);
         }
 
-        $katalogSampah = $query->orderBy('nama_sampah')->get();
+        $katalogSampah = $query->orderBy('nama_item_sampah')->get();
 
         return response()->json([
             'success' => true,
